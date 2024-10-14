@@ -1,3 +1,4 @@
+import { signinInput, signupInput } from "@arshey/blog-common";
 import { PrismaClient } from "@prisma/client/edge";
 import { withAccelerate } from "@prisma/extension-accelerate";
 import { Hono } from "hono";
@@ -28,67 +29,91 @@ async function hashPassword(password: string | undefined) {
   
   userRouter.post('/signup', async (c) => {
     try {
-      const { name, email, password } = await c.req.json();
-      
-      // Use the DATABASE_URL from the environment variables
-      const prisma = new PrismaClient({
-        datasourceUrl: c.env.DATABASE_URL,
-      }).$extends(withAccelerate());
-  
-      // Hash the password using the Web Crypto API
-      const hashedPassword = await hashPassword(password);
-  
-      // Store the user with the hashed password
-      const newUser = await prisma.user.create({
-        data: {
-          name,
-          email,
-          password: hashedPassword,
-        },
-      });
-  
-      // Generate a JWT token for the new user
-      const token = await generateToken(newUser.id, c.env.JWT_SECRET); // Use JWT_SECRET from environment variables
-  
-      // Return the user ID and token
-      return c.json({ userId: newUser.id, token });
-    } catch (error:any) {
-      console.error(error);
-      return c.text('Error creating user: ' + error.message, 500);
-    }
-  });
+        const body = await c.req.json();
+        console.log("Received body:", body); // Log the incoming body
 
-  userRouter.post('/signin', async (c) => {
-    try {
-      const { email, password } = await c.req.json();
-  
+        const { success, error } = signupInput.safeParse(body);
+        if (!success) {
+            console.error("Validation error:", error);
+            c.status(411);
+            return c.json({
+                message: "Inputs not correct",
+                issues: error.issues // Log validation issues for debugging
+            });
+        }
+
+        // Use the DATABASE_URL from the environment variables
+        const prisma = new PrismaClient({
+            datasourceUrl: c.env.DATABASE_URL,
+        }).$extends(withAccelerate());
+
+        // Hash the password using the Web Crypto API
+        const hashedPassword = await hashPassword(body.password);
+
+        // Store the user with the hashed password
+        const newUser = await prisma.user.create({
+            data: {
+                name: body.name,
+                email: body.email,
+                password: hashedPassword
+            },
+        });
+
+        // Generate a JWT token for the new user
+        const token = await generateToken(newUser.id, c.env.JWT_SECRET);
+
+        // Return the user ID and token
+        return c.json({ userId: newUser.id, token });
+    } catch (error: any) {
+        console.error(error);
+        return c.text('Error creating user: ' + error.message, 500);
+    }
+});
+
+
+userRouter.post('/signin', async (c) => {
+  try {
+      const body = await c.req.json();
+      const { success, error } = signinInput.safeParse(body);
+      if (!success) {
+          console.error("Validation error:", error);
+          c.status(411);
+          return c.json({
+              message: "Inputs not correct",
+              issues: error.issues
+          });
+      }
+
       // Use the DATABASE_URL from environment variables
       const prisma = new PrismaClient({
-        datasourceUrl: c.env.DATABASE_URL,
+          datasourceUrl: c.env.DATABASE_URL,
       }).$extends(withAccelerate());
-  
+
       // Fetch user by email
       const user = await prisma.user.findUnique({
-        where: { email },
+          where: { email: body.email },
       });
-  
+
+      // If user is not found, return 404
       if (!user) {
-        return c.text('User not found', 404); // Return 404 if user doesn't exist
+          return c.text('User not found', 404);
       }
-  
-      // Compare the provided password with the hashed password
-      const hashedPassword = await hashPassword(password);
+
+      // Hash the provided password to compare
+      const hashedPassword = await hashPassword(body.password);
+
+      // Compare the provided password with the stored hashed password
       if (hashedPassword !== user.password) {
-        return c.text('Invalid credentials', 401); // Return 401 if password is incorrect
+          return c.text('Invalid credentials', 401);
       }
-  
+
       // Generate a JWT for the user
       const token = await generateToken(user.id, c.env.JWT_SECRET);
-  
+
       // Return the token and user info
       return c.json({ userId: user.id, token });
-    } catch (error : any) {
-      console.error(error);
+  } catch (error: any) {
+      console.error('Error signing in:', error);
       return c.text('Error signing in: ' + error.message, 500);
-    }
-  });
+  }
+});
